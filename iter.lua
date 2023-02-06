@@ -1,5 +1,11 @@
 local iter_meta_index = {__type = "iterable"}
 local lib = iter_meta_index
+
+local wrap = coroutine.wrap
+local yield = coroutine.yield
+local unpack = table.unpack
+local pack = table.pack
+
 -- ===============================核心=================================
 -- =============================基本函数===============================
 -- 给函数的简单包装（惰性）
@@ -33,7 +39,7 @@ local function go_ahead( iter )
     while true do
         local r = {iter()}
         if r[1] then
-            coroutine.yield( table.unpack(r) )
+            yield( unpack(r) )
         else
             break
         end
@@ -47,7 +53,7 @@ function chain( ... )
     local this = { __iter_state = "ready" }
     this.this = this
     local iters = {...}
-    local chain_fn = coroutine.wrap( function (  )
+    local chain_fn = wrap( function (  )
         for n, iter in ipairs(iters) do
             local t = type(iter)
             -- 判断迭代方式
@@ -66,7 +72,7 @@ function chain( ... )
                 else
                     -- 没有则按照普通序列迭代
                     for i, item in ipairs(iter) do
-                        coroutine.yield( item )
+                        yield( item )
                     end
                 end
             elseif t == "function" then
@@ -93,22 +99,34 @@ end
 
 
 -- 返回对可迭代类型执行函数的迭代器（惰性）
--- fn(it) -> ait
+-- fn(...it) -> ait
 function lib.map( iter, fn )
-    return chain(coroutine.wrap( function (  )
-        for item in iter do
-            coroutine.yield( fn(item) )
+    return chain(wrap( function (  )
+        -- 多返回值实现
+        while true do
+            local item = pack(iter())
+            if item[1] then
+                yield( fn(unpack(item)) )
+            else
+                break
+            end
         end
     end ))
 end
 
 -- 返回过滤后的迭代器（惰性）
--- fn(it) -> bool
+-- fn(...it) -> bool
 function lib.filter( iter, fn )
-    return chain(coroutine.wrap( function (  )
-        for item in iter do
-            if fn(item) then
-                coroutine.yield( item )
+    return chain(wrap( function (  )
+        -- 多返回值实现
+        while true do
+            local item = pack(iter())
+            if item[1] then
+                if fn(unpack(item)) then
+                    yield( unpack(item) )
+                end
+            else
+                break
             end
         end
     end ))
@@ -116,11 +134,12 @@ end
 
 -- 返回组合迭代器（惰性）
 function lib.zip( iter_a, iter_b )
-    return chain(coroutine.wrap( function (  )
+    return chain(wrap( function (  )
         while true do
-            local ia, ib = iter_a(), iter_b()
-            if ia and ib then
-                coroutine.yield( ia, ib )
+            local ia, ib = pack(iter_a()), pack(iter_b())
+            if ia[1] and ib[1] then
+                table.move(ib, 1, #ib, #ia+1, ia)
+                yield( unpack(ia) )
             else
                 iter_a.__iter_state = "comsumed"
                 iter_b.__iter_state = "comsumed"
@@ -132,19 +151,13 @@ end
 
 -- 返回带从1开始序号的迭代器（惰性）
 function lib.enumerate( iter )
-    return chain(coroutine.wrap( function (  )
-        -- local n = 1
-        -- for item in iter do
-        --     coroutine.yield( n, item )
-        --     n = n + 1
-        -- end
-        
+    return chain(wrap( function (  )       
         -- 多返回实现
         local n = 1
         while true do
-            local r = {iter()}
+            local r = pack(iter())
             if r[1] then
-                coroutine.yield( n, table.unpack(r) )
+                yield( n, unpack(r) )
                 n = n + 1
             else
                 break
@@ -272,14 +285,43 @@ function range( stop, start, step )
     if math.type(stop) ~= 'integer' then error("#2 is not a integer") end
     if math.type(step) ~= 'integer' then error("#3 is not a integer") end
     
-    local co_fn = coroutine.wrap( function (  )
+    local co_fn = wrap( function (  )
         for i = start, stop-( step > 0 and 1 or -1 ), step do
-            coroutine.yield(i)
+            yield(i)
         end
     end )
     -- return iter_new(co_fn)
     return chain(co_fn)
 end
 
+-- 表迭代器
+-- 迭代表中的每一项，可能掺杂序列中的项，故不应该混用
+function dict( t )
+    local co_fn = wrap( function (  )
+        for k, v in pairs(t) do
+            yield( k, v )
+        end
+    end )
+    return chain(co_fn)
+end
 
+-- 获取表中所有键的迭代器
+function keys( t )
+    local co_fn = wrap( function (  )
+        for k, _v in pairs(t) do
+            yield( k )
+        end
+    end )
+    return chain(co_fn)
+end
+
+-- 获取表中所有值的迭代器
+function values( t )
+    local co_fn = wrap( function (  )
+        for _k, v in pairs(t) do
+            yield( v )
+        end
+    end )
+    return chain(co_fn)
+end
 -- ============================常用迭代器===============================

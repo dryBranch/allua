@@ -100,3 +100,22 @@ function impl_test(  )
 end
 
 test(impl_test, "impl test")
+
+function multi_param_test(  )
+    local iter = dict{a = 1, b = "hello", c = true}
+    :map(function(k, v) return k, tostring(v) end)
+    :zip(
+        dict{x = false, y = {}}
+            :map(function(k, v) return k, tostring(v) end)
+    )
+    :filter(function(k1, v1, k2, v2) return #v1 + #v2 > 7 end)
+
+    for k, v, a, b in iter do
+        assert( (k and v and a and b) ~= nil )
+        -- 1 and fasle will false
+        assert(#v + #b > 7)
+    end
+end
+
+test(multi_param_test, "multi param")
+
